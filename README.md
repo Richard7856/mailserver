@@ -20,20 +20,28 @@ Un sistema completo de gestión de correos electrónicos corporativos que permit
 - **INBOX.Junk**: Spam
 
 ### 📧 **Operaciones de Email**
-- Listar emails por carpeta con paginación
+- Listar emails por carpeta con paginación automática
 - Leer emails individuales con formato completo
-- Enviar nuevos emails
+- Enviar nuevos emails con firma personalizada
 - Responder a emails existentes
+- Guardar borradores automáticamente
+- Adjuntos: cargar, descargar, vista previa de imágenes
 - Mover emails entre carpetas
 - Eliminar emails (papelera/eliminación permanente)
+- Paginación inteligente (más de 50 correos)
 
 ### 🎨 **Interfaz Moderna**
-- Dashboard responsivo y intuitivo
-- Navegación por pestañas por carpeta
-- Modal para lectura de emails
-- Composer integrado para nuevos emails
+- Dashboard responsivo y mobile-first
+- Navegación por pestañas por carpeta (sin contadores, UI limpia)
+- Modal para lectura de emails con vista de adjuntos
+- Composer integrado con autoguardado de borradores
+- Vista previa de imágenes inline en adjuntos
+- Perfil de usuario con firma de imagen personalizada
+- Autocompletado de dominio en login (@grupoeuromex.com)
+- Persistencia de sesión con sessionStorage
 - Notificaciones en tiempo real
-- Diseño mobile-first
+- Paginación automática (50 correos por página)
+- Diseño optimizado para todos los dispositivos
 
 ## 🛠️ Configuración Técnica
 
@@ -356,16 +364,24 @@ Para soporte técnico o preguntas sobre el sistema:
 
 ---
 
-## 🎯 Próximas Funcionalidades
+## 🎯 Funcionalidades Completadas
+
+- [x] **Adjuntos**: Descarga, vista previa de imágenes, carga múltiple
+- [x] **Borradores**: Guardado automático al cerrar composer
+- [x] **Firma Personalizada**: Firma con imagen por usuario
+- [x] **Paginación**: Control automático para listas grandes
+- [x] **Responsive Design**: Optimizado para móvil, tablet y desktop
+- [x] **Persistencia de Sesión**: No pedir credenciales constantemente
+- [x] **Autocompletado**: Dominio corporativo pre-llenado
+
+## 🚧 Próximas Funcionalidades
 
 - [ ] **Búsqueda Avanzada**: Filtros por fecha, remitente, asunto
-- [ ] **Adjuntos**: Descarga y preview de archivos
 - [ ] **Filtros Automáticos**: Reglas de organización
-- [ ] **Sincronización**: Auto-refresh cada X minutos
 - [ ] **Temas**: Modo oscuro/claro
 - [ ] **Multi-idioma**: Soporte para inglés/español
-- [ ] **Notificaciones Push**: Alertas de nuevos emails
-- [ ] **API Webhooks**: Integración con sistemas externos
+- [ ] **Webhooks**: Notificaciones de nuevos emails vía WhatsApp/Telegram
+- [ ] **Respuestas vía Webhook**: Responder desde WhatsApp/Telegram
 
 ---
 

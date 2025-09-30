@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.*.local
+
+# User data (IMPORTANTE: No subir datos de usuarios)
+data/profiles/
+data/signatures/
+data/*.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+error.log
+exceptions.log
+rejections.log
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Uploads y temporales
+uploads/
+temp/
+tmp/
+
+# Test files (opcional, si tienes tests sensibles)
+test-*.js
