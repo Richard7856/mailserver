@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grupo Euromex - Administrador de Correos</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="dashboard-page">
+    <!-- Header -->
+    <header class="dashboard-header">
+        <div class="header-content">
+            <div class="logo-section">
+                <div class="logo-icon">📧</div>
+                <h1>Grupo Euromex</h1>
+            </div>
+            <div class="user-section">
+                <div class="user-info">
+                    <div class="user-email" id="userEmail">Cargando...</div>
+                </div>
+                <button class="logout-button" onclick="logout()">Cerrar Sesión</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navegación de Carpetas -->
+    <nav class="folder-nav">
+        <div class="folder-nav-content">
+            <button class="folder-tab active" data-folder="INBOX" onclick="switchFolder('INBOX')">
+                📥 Inbox
+            </button>
+            <button class="folder-tab" data-folder="INBOX.Sent" onclick="switchFolder('INBOX.Sent')">
+                📤 Enviados
+            </button>
+            <button class="folder-tab" data-folder="INBOX.Drafts" onclick="switchFolder('INBOX.Drafts')">
+                📝 Borradores
+            </button>
+            <button class="folder-tab" data-folder="INBOX.Trash" onclick="switchFolder('INBOX.Trash')">
+                🗑️ Papelera
+            </button>
+            <button class="folder-tab" data-folder="INBOX.Junk" onclick="switchFolder('INBOX.Junk')">
+                🚫 Spam
+            </button>
+        </div>
+    </nav>
+
+    <!-- Contenido Principal -->
+    <main class="main-content">
+        <!-- Header del Contenido -->
+        <div class="content-header">
+            <div class="content-title">
+                <h2 id="currentFolderTitle">📥 Inbox</h2>
+                <div class="pagination-info" id="paginationInfo" style="display: none;">
+                    <span id="emailCount">0</span> correos
+                </div>
+            </div>
+            <div class="content-actions">
+                <div class="pagination-controls" id="paginationControls" style="display: none;">
+                    <button class="btn btn-icon" onclick="previousPage()" id="prevPageBtn" disabled>
+                        ←
+                    </button>
+                    <span class="page-indicator" id="pageIndicator">Pág. 1</span>
+                    <button class="btn btn-icon" onclick="nextPage()" id="nextPageBtn" disabled>
+                        →
+                    </button>
+                </div>
+                <button class="btn btn-primary" onclick="showComposer()">
+                    ✉️ Nuevo Email
+                </button>
+                <button class="btn btn-secondary" onclick="showProfileSettings()">
+                    👤 Perfil
+                </button>
+                <button class="btn btn-secondary" onclick="refreshEmails()">
+                    🔄 Actualizar
+                </button>
+            </div>
+        </div>
+
+        <!-- Lista de Emails -->
+        <div class="email-list" id="emailList">
+            <div class="email-list-header">
+                <div class="header-checkbox">
+                    <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                </div>
+                <div class="header-from">De</div>
+                <div class="header-subject">Asunto</div>
+                <div class="header-attachment">Adjuntos</div>
+                <div class="header-date">Fecha</div>
+                <div class="header-actions">Acciones</div>
+            </div>
+            <div id="emailListContent">
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    Cargando emails...
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal de Email -->
+    <div id="emailModal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title" id="modalTitle">Email</div>
+                <button class="modal-close" onclick="closeEmailModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Contenido del email se carga aquí -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="replyToEmail()">
+                    📧 Responder
+                </button>
+                <button class="btn btn-secondary" onclick="closeEmailModal()">
+                    Cerrar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Composer -->
+    <div id="composerModal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Nuevo Email</div>
+                <button class="modal-close" onclick="closeComposer()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="composer">
+                    <div class="composer-body">
+                        <form id="composerForm" class="composer-form">
+                            <div class="composer-row">
+                                <label class="composer-label">Para:</label>
+                                <div class="autocomplete-container">
+                                    <input type="email" class="composer-input" id="composerTo" required autocomplete="off">
+                                    <div id="autocompleteDropdown" class="autocomplete-dropdown" style="display: none;"></div>
+                                </div>
+                            </div>
+                            <div class="composer-row">
+                                <label class="composer-label">CC:</label>
+                                <div class="autocomplete-container">
+                                    <input type="email" class="composer-input" id="composerCc" autocomplete="off">
+                                    <div id="autocompleteDropdownCc" class="autocomplete-dropdown" style="display: none;"></div>
+                                </div>
+                            </div>
+                            <div class="composer-row">
+                                <label class="composer-label">CCO:</label>
+                                <div class="autocomplete-container">
+                                    <input type="email" class="composer-input" id="composerBcc" autocomplete="off">
+                                    <div id="autocompleteDropdownBcc" class="autocomplete-dropdown" style="display: none;"></div>
+                                </div>
+                            </div>
+                            <div class="composer-row">
+                                <label class="composer-label">Asunto:</label>
+                                <input type="text" class="composer-input" id="composerSubject" required>
+                            </div>
+                            <div class="composer-row">
+                                <label class="composer-label">Mensaje:</label>
+                                <textarea class="composer-input composer-textarea" id="composerMessage" required></textarea>
+                            </div>
+                            <div class="composer-row">
+                                <label class="composer-label">Adjuntos:</label>
+                                <div class="attachment-container">
+                                    <input type="file" class="attachment-input" id="attachmentInput" multiple accept="image/*,.pdf,.doc,.docx,.txt">
+                                    <label for="attachmentInput" class="attachment-label">
+                                        📎 Seleccionar archivos
+                                    </label>
+                                    <div id="attachmentList" class="attachment-list"></div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="sendEmail()">
+                    📤 Enviar
+                </button>
+                <button class="btn btn-secondary" onclick="closeComposer()">
+                    Cancelar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Credenciales (para operaciones que requieren re-autenticación) -->
+    <div id="credentialsModal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Verificación de Credenciales</div>
+                <button class="modal-close" onclick="closeCredentialsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Para realizar esta operación, necesitamos verificar tus credenciales:</p>
+                <form id="credentialsForm">
+                    <div class="form-group">
+                        <label for="credentialsEmail">Email:</label>
+                        <input type="text" id="credentialsEmail" class="composer-input" placeholder="nombre@grupoeuromex.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="credentialsPassword">Contraseña:</label>
+                        <input type="password" id="credentialsPassword" class="composer-input" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="confirmCredentials()">
+                    ✅ Confirmar
+                </button>
+                <button class="btn btn-secondary" onclick="closeCredentialsModal()">
+                    Cancelar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Configuración de Perfil -->
+    <div id="profileModal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Configuración de Perfil</div>
+                <button class="modal-close" onclick="closeProfileModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="profileForm">
+                    <div class="form-group">
+                        <label for="profileName">Nombre completo:</label>
+                        <input type="text" id="profileName" class="form-input" placeholder="Tu nombre completo" required>
+                    </div>
+                    <div class="form-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color);">
+                        <label>
+                            <input type="checkbox" id="signatureEnabled" onchange="toggleSignatureOptions()">
+                            Activar firma automática con imagen
+                        </label>
+                    </div>
+                    <div id="signatureOptions" class="signature-options" style="display: none;">
+                        <div class="form-group">
+                            <label for="signatureImage">Imagen de firma:</label>
+                            <input type="file" id="signatureImage" accept="image/*" onchange="previewSignatureImage()">
+                            <small style="color: var(--text-light); margin-top: 8px; display: block;">
+                                La imagen se agregará automáticamente a todos tus emails enviados
+                            </small>
+                            <div id="signaturePreview" class="signature-preview" style="display: none;">
+                                <img id="signaturePreviewImg" alt="Vista previa de la firma">
+                                <button type="button" onclick="removeSignatureImage()">Eliminar imagen</button>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="saveProfile()">
+                    💾 Guardar Perfil
+                </button>
+                <button class="btn btn-secondary" onclick="closeProfileModal()">
+                    Cancelar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
