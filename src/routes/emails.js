@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authService = require('../services/authService');
 const emailService = require('../services/emailService');
+const openaiService = require('../services/openaiService');
 const emailConfig = require('../config/email');
 const { emailLogger, logger } = require('../utils/logger');
 const {
@@ -174,7 +175,7 @@ router.post('/reply', requireAuth, validateEmailAccess, async (req, res) => {
       replyText
     );
 
-    emailLogger.emailOperation(user.email, 'reply_email', {
+    emailLogger.emailOperation(user?.email || 'unknown', 'reply_email', {
       originalSubject: originalEmail.subject,
       to: originalEmail.from
     });
@@ -203,7 +204,7 @@ router.post('/move', requireAuth, async (req, res) => {
     const { sourceFolder, targetFolder, uid, email, password } = req.body;
     const user = authService.getCurrentUser(req);
     
-    const validFolders = Object.values(emailConfig.folders);
+    const validFolders = [...Object.values(emailConfig.folders), ...Object.keys(emailConfig.folders)];
     if (!validFolders.includes(sourceFolder) || !validFolders.includes(targetFolder)) {
       return res.status(400).json({
         success: false,
@@ -234,7 +235,7 @@ router.post('/move', requireAuth, async (req, res) => {
       emailUid
     );
 
-    emailLogger.emailOperation(user.email, 'move_email', {
+    emailLogger.emailOperation(user?.email || 'unknown', 'move_email', {
       sourceFolder: sourceFolder,
       targetFolder: targetFolder,
       uid: emailUid
@@ -322,7 +323,7 @@ router.post('/:folder/:uid', addUserInfo, logUserActivity, async (req, res) => {
     const { folder, uid } = req.params;
     const user = authService.getCurrentUser(req);
     
-    const validFolders = Object.values(emailConfig.folders);
+    const validFolders = [...Object.values(emailConfig.folders), ...Object.keys(emailConfig.folders)];
     if (!validFolders.includes(folder)) {
       return res.status(400).json({
         success: false,
@@ -353,7 +354,7 @@ router.post('/:folder/:uid', addUserInfo, logUserActivity, async (req, res) => {
       emailUid
     );
 
-    emailLogger.emailOperation(user.email, 'get_email', {
+    emailLogger.emailOperation(user?.email || 'unknown', 'get_email', {
       folder: folder,
       uid: emailUid
     });
@@ -389,7 +390,7 @@ router.delete('/:folder/:uid', requireAuth, async (req, res) => {
     const { folder, uid } = req.params;
     const user = authService.getCurrentUser(req);
     
-    const validFolders = Object.values(emailConfig.folders);
+    const validFolders = [...Object.values(emailConfig.folders), ...Object.keys(emailConfig.folders)];
     if (!validFolders.includes(folder)) {
       return res.status(400).json({
         success: false,
@@ -420,7 +421,7 @@ router.delete('/:folder/:uid', requireAuth, async (req, res) => {
       emailUid
     );
 
-    emailLogger.emailOperation(user.email, 'delete_email', {
+    emailLogger.emailOperation(user?.email || 'unknown', 'delete_email', {
       folder: folder,
       uid: emailUid
     });
@@ -440,6 +441,38 @@ router.delete('/:folder/:uid', requireAuth, async (req, res) => {
 });
 
 /**
+ * POST /api/emails/clear-cache
+ * Limpiar caché de emails para el usuario actual
+ */
+router.post('/clear-cache', addUserInfo, logUserActivity, async (req, res) => {
+  try {
+    const user = authService.getCurrentUser(req);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario no autenticado'
+      });
+    }
+
+    emailService.clearUserCache(user.email);
+    
+    emailLogger.emailOperation(user.email, 'clear_cache');
+    
+    res.json({
+      success: true,
+      message: 'Caché limpiado exitosamente'
+    });
+
+  } catch (error) {
+    emailLogger.emailError(req.user?.email || 'unknown', 'clear_cache', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al limpiar caché'
+    });
+  }
+});
+
+/**
  * POST /api/emails/:folder
  * Obtener lista de emails de una carpeta específica
  */
@@ -449,7 +482,7 @@ router.post('/:folder', addUserInfo, logUserActivity, async (req, res) => {
     const { limit = 50, page = 1 } = req.query;
     const user = authService.getCurrentUser(req);
     
-    const validFolders = Object.values(emailConfig.folders);
+    const validFolders = [...Object.values(emailConfig.folders), ...Object.keys(emailConfig.folders)];
     if (!validFolders.includes(folder)) {
       return res.status(400).json({
         success: false,
@@ -467,18 +500,24 @@ router.post('/:folder', addUserInfo, logUserActivity, async (req, res) => {
       });
     }
 
-    const emails = await emailService.getEmailsFromFolder(
+    const result = await emailService.getEmailsFromFolder(
       email,
       password,
       folder,
       maxLimit
     );
 
-    emailLogger.emailOperation(user.email, 'list_emails', {
+    // Manejar tanto el formato antiguo como el nuevo
+    const emails = result.emails || result;
+    const totalCount = result.totalCount || emails.length;
+
+    emailLogger.emailOperation(user?.email || email, 'list_emails', {
       folder: folder,
       count: emails.length,
+      totalCount: totalCount,
       limit: maxLimit,
-      page: page
+      page: page,
+      fromCache: result.emails !== undefined
     });
 
     res.json({
@@ -488,7 +527,8 @@ router.post('/:folder', addUserInfo, logUserActivity, async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: maxLimit,
-        total: emails.length
+        total: totalCount,
+        returned: emails.length
       }
     });
 
@@ -527,6 +567,48 @@ router.use((error, req, res, next) => {
   }
   
   next(error);
+});
+
+// Ruta para generar respuesta con IA
+router.post('/ai-response', async (req, res) => {
+  try {
+    const { email, style = 'formal' } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Datos del email requeridos'
+      });
+    }
+    
+    if (!openaiService.isConfigured()) {
+      return res.status(400).json({
+        success: false,
+        error: 'OpenAI no está configurado. Usando respuesta predefinida.',
+        fallback: true
+      });
+    }
+    
+    const result = await openaiService.generateEmailResponse(email, style);
+    
+    emailLogger.emailOperation(email.from, 'ai_response_generated', {
+      style: style,
+      tokens: result.tokens
+    });
+    
+    res.json({
+      success: true,
+      response: result.response,
+      tokens: result.tokens
+    });
+    
+  } catch (error) {
+    emailLogger.emailError(req.body?.email?.from || 'unknown', 'ai_response', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al generar respuesta con IA: ' + error.message
+    });
+  }
 });
 
 module.exports = router;

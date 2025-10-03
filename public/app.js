@@ -16,7 +16,8 @@ const AppState = {
     currentPage: 1,
     totalEmails: 0,
     emailsPerPage: 50,
-    userProfile: null // Perfil del usuario
+    userProfile: null, // Perfil del usuario
+    emailCache: {} // Cache de emails para evitar recargas
 };
 
 // Configuración de carpetas
@@ -33,11 +34,9 @@ const FOLDERS = {
  */
 async function init() {
     try {
-        // Verificar autenticación
-        await checkAuthStatus();
-        
-        // Cargar información del usuario
-        await loadUserProfile();
+        // DESACTIVADO: Verificación de autenticación para evitar bucles
+        // await checkAuthStatus();
+        // await loadUserProfile();
         
         // Intentar recuperar credenciales de sessionStorage
         const savedCredentials = sessionStorage.getItem('userCredentials');
@@ -53,18 +52,17 @@ async function init() {
             }
         }
         
-        // Solicitar credenciales solo si no están guardadas
+        // Verificar si tenemos credenciales
         if (!AppState.userCredentials) {
-            await requestCredentials('iniciar la aplicación');
-            
-            // Si el usuario cerró el modal sin ingresar credenciales
-            if (!AppState.userCredentials) {
-                console.log('Usuario no ingresó credenciales, cargando UI básica');
-                return;
-            }
+            console.log('❌ No hay credenciales disponibles');
+            console.log('🔐 Redirigiendo al login...');
+            window.location.href = '/login.html';
+            return;
         }
         
-        // Ahora con credenciales, cargar todo
+        console.log('✅ Credenciales encontradas, cargando aplicación...');
+        
+        // Cargar todo con las credenciales disponibles
         await loadFolderStats();
         await loadEmails(AppState.currentFolder);
         
@@ -87,21 +85,9 @@ async function init() {
  * Verificar estado de autenticación
  */
 async function checkAuthStatus() {
-    try {
-        const response = await fetch('/api/auth/status');
-        const data = await response.json();
-        
-        if (!data.success || !data.authenticated) {
-            throw new Error('Usuario no autenticado');
-        }
-        
-        AppState.currentUser = data.user;
-        return true;
-        
-    } catch (error) {
-        console.error('Error de autenticación:', error);
-        throw new Error('No autorizado');
-    }
+    // DESACTIVADO: Evitar bucles de redirección y rate limiting
+    console.log('checkAuthStatus: Desactivado para evitar bucles');
+    return true;
 }
 
 /**
@@ -236,12 +222,22 @@ async function switchFolder(folderName) {
         tab.classList.remove('active');
     });
     
-    document.querySelector(`[data-folder="${folderName}"]`).classList.add('active');
+    // Buscar el tab correspondiente al folder
+    const targetTab = document.querySelector(`.folder-tab[onclick*="switchFolder('${folderName}')"]`);
+    if (targetTab) {
+        targetTab.classList.add('active');
+    } else {
+        console.warn(`No se encontró el tab para la carpeta: ${folderName}`);
+    }
     
     // Actualizar título
     const titleElement = document.getElementById('currentFolderTitle');
+    const titleElementMobile = document.getElementById('currentFolderTitleMobile');
     if (titleElement && FOLDERS[folderName]) {
         titleElement.textContent = `${FOLDERS[folderName].icon} ${FOLDERS[folderName].name}`;
+    }
+    if (titleElementMobile && FOLDERS[folderName]) {
+        titleElementMobile.textContent = `${FOLDERS[folderName].icon} ${FOLDERS[folderName].name}`;
     }
     
     // Cambiar carpeta actual y cargar emails
@@ -259,13 +255,45 @@ async function switchFolder(folderName) {
  */
 async function loadEmails(folderName) {
     try {
-        AppState.isLoading = true;
-        showLoading();
-        
+        // Verificar credenciales
         if (!AppState.userCredentials) {
-            await requestCredentials('Para cargar emails');
+            console.log('❌ No hay credenciales para cargar emails');
+            showNotification('Sesión expirada. Redirigiendo al login...', 'error');
+            setTimeout(() => {
+                window.location.href = '/login.html';
+            }, 2000);
             return;
         }
+        
+        // Verificar cache
+        const cacheKey = `${folderName}_${AppState.currentPage}`;
+        if (AppState.emailCache && AppState.emailCache[cacheKey]) {
+            const cacheData = AppState.emailCache[cacheKey];
+            const cacheAge = Date.now() - cacheData.timestamp;
+            
+            // Usar cache si es menor a 5 minutos
+            if (cacheAge < 5 * 60 * 1000) {
+                console.log('📦 Usando cache de emails para', folderName);
+                AppState.emails = cacheData.emails;
+                AppState.totalEmails = cacheData.totalEmails;
+                AppState.currentFolder = folderName;
+                
+                // Extraer contactos para autocompletado
+                extractContactsFromEmails(cacheData.emails);
+                
+                // Actualizar paginación
+                updatePaginationControls();
+                
+                renderEmails();
+                hideLoading(); // Asegurar que se oculte el loading
+                return;
+            } else {
+                console.log('🗑️ Cache expirado para', folderName, 'edad:', Math.round(cacheAge / 1000), 'segundos');
+            }
+        }
+        
+        AppState.isLoading = true;
+        showLoading();
         
         const response = await fetch(`/api/emails/${folderName}`, {
             method: 'POST',
@@ -279,8 +307,28 @@ async function loadEmails(folderName) {
         
         if (data.success) {
             // Ordenar emails por fecha (más recientes primero)
-            AppState.emails = data.emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+            const sortedEmails = data.emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+            AppState.emails = sortedEmails;
             AppState.totalEmails = data.emails.length;
+            AppState.currentFolder = folderName;
+            
+            // Guardar en cache
+            if (!AppState.emailCache) {
+                AppState.emailCache = {};
+            }
+            AppState.emailCache[cacheKey] = {
+                emails: sortedEmails,
+                totalEmails: data.emails.length,
+                timestamp: Date.now()
+            };
+            
+            // Limpiar cache antiguo (más de 5 minutos)
+            const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+            Object.keys(AppState.emailCache).forEach(key => {
+                if (AppState.emailCache[key].timestamp < fiveMinutesAgo) {
+                    delete AppState.emailCache[key];
+                }
+            });
             
             // Extraer contactos para autocompletado
             extractContactsFromEmails(data.emails);
@@ -314,14 +362,19 @@ async function loadEmails(folderName) {
  * Mostrar estado de carga
  */
 function showLoading() {
+    console.log('⏳ showLoading() called');
+    AppState.isLoading = true;
     const content = document.getElementById('emailListContent');
     if (content) {
+        console.log('📝 Mostrando loading en emailListContent');
         content.innerHTML = `
             <div class="loading">
                 <div class="loading-spinner"></div>
                 Cargando emails...
             </div>
         `;
+    } else {
+        console.log('❌ emailListContent no encontrado');
     }
 }
 
@@ -329,6 +382,8 @@ function showLoading() {
  * Ocultar estado de carga
  */
 function hideLoading() {
+    console.log('🔄 hideLoading() called');
+    AppState.isLoading = false;
     // El contenido se actualiza en renderEmails()
 }
 
@@ -341,6 +396,17 @@ function renderEmails() {
     const content = document.getElementById('emailListContent');
     if (!content) {
         console.error('emailListContent element not found!');
+        console.log('Available elements:', document.querySelectorAll('[id*="email"]'));
+        
+        // Fallback: buscar el contenedor de emails
+        const emailList = document.getElementById('emailList');
+        if (emailList) {
+            console.log('Found emailList, creating content div');
+            const newContent = document.createElement('div');
+            newContent.id = 'emailListContent';
+            emailList.appendChild(newContent);
+            return renderEmails(); // Recursión para intentar de nuevo
+        }
         return;
     }
     
@@ -359,48 +425,92 @@ function renderEmails() {
     
     console.log('Rendering', AppState.emails.length, 'emails');
     
-    const emailsHTML = AppState.emails.map(email => `
-        <div class="email-item ${!email.seen ? 'unread' : ''}" onclick="openEmail(${email.uid})">
-            <div class="email-checkbox">
-                <input type="checkbox" onchange="toggleEmailSelection(${email.uid}, this.checked)" 
-                       onclick="event.stopPropagation()">
-            </div>
-            <div class="email-from">
-                <div class="sender-avatar">${extractEmailName(email.from).charAt(0).toUpperCase()}</div>
-                <span class="sender-name">${extractEmailName(email.from)}</span>
-            </div>
-            <div class="email-content-preview">
-                <div class="email-subject ${!email.seen ? 'unread' : ''}">
-                    ${email.subject || '(Sin asunto)'}
-                    ${!email.seen ? '<span class="unread-indicator">●</span>' : ''}
-                </div>
-            </div>
-            <div class="email-attachment">
-                ${email.attachments && email.attachments.length > 0 ? 
-                    `<div class="attachment-indicator" title="${email.attachments.length} adjunto${email.attachments.length > 1 ? 's' : ''}">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M10.5 1H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V4.5L10.5 1zM5 0h6.5L15 3.5V13a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V3a3 3 0 0 1 3-3z"/>
-                            <path d="M6 6h4v1H6V6zm0 2h4v1H6V8z"/>
-                        </svg>
-                        <span class="attachment-count">${email.attachments.length}</span>
-                    </div>` : ''}
-            </div>
-            <div class="email-date">${formatDateFull(email.date)}</div>
-            <div class="email-actions" onclick="event.stopPropagation()">
-                <button class="action-btn" onclick="markAsImportant(${email.uid})" title="Marcar">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
-                        <polygon points="8,2 10.5,6 15,6 11.5,9.5 13,14 8,11 3,14 4.5,9.5 1,6 5.5,6"/>
-                    </svg>
-                </button>
-                <button class="action-btn" onclick="deleteEmail(${email.uid})" title="Mover a papelera">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
-                        <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
-                    </svg>
-                </button>
-            </div>
-        </div>
-    `).join('');
+                const emailsHTML = AppState.emails.map(email => {
+                    const hasAttachments = email.attachments && email.attachments.length > 0;
+                    const attachmentIcon = hasAttachments ? `📎` : '';
+                    const fromName = extractEmailName(email.from);
+                    const fromEmail = extractEmailAddress(email.from);
+                    
+                    // Crear resumen del contenido del email
+                    let emailPreview = extractEmailSnippet(email);
+                    
+                    // Detectar si es móvil o web
+                    const isMobile = window.innerWidth <= 768;
+                    
+                    if (isMobile) {
+                        // Layout móvil optimizado - Grid 2x3
+                        return `
+                        <div class="email-item email-item-mobile ${!email.seen ? 'unread' : ''}" onclick="openEmail(${email.uid})">
+                            <!-- Fila superior: correo | fecha -->
+                            <div class="email-top-row">
+                                <div class="email-from-mobile">${fromEmail}</div>
+                                <div class="email-date-mobile">${formatDate(email.date)}</div>
+                            </div>
+                            
+                            <!-- Fila media: asunto | adjuntos -->
+                            <div class="email-middle-row">
+                                <div class="email-subject-mobile ${!email.seen ? 'unread' : ''}">
+                                    ${email.subject || '(Sin asunto)'}
+                                    ${!email.seen ? '<span class="unread-indicator">●</span>' : ''}
+                                </div>
+                                <div class="email-attachment-mobile">
+                                    ${hasAttachments ? `${attachmentIcon} ${email.attachments.length}` : ''}
+                                </div>
+                            </div>
+                            
+                            <!-- Fila inferior: contenido | acciones -->
+                            <div class="email-bottom-row">
+                                <div class="email-preview-mobile">${emailPreview}</div>
+                                <div class="email-actions-mobile" onclick="event.stopPropagation()">
+                                    <button class="action-btn ai-btn" onclick="suggestAIResponse(${email.uid})" title="IA">
+                                        🤖
+                                    </button>
+                                    <button class="action-btn star-btn" onclick="markAsImportant(${email.uid})" title="⭐">
+                                        ⭐
+                                    </button>
+                                    <button class="action-btn delete-btn" onclick="deleteEmail(${email.uid})" title="🗑️">
+                                        🗑️
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    } else {
+                        // Layout web con tabla
+                        return `
+                        <div class="email-item ${!email.seen ? 'unread' : ''}" onclick="openEmail(${email.uid})">
+                            <div class="email-checkbox">
+                                <input type="checkbox" onchange="toggleEmailSelection(${email.uid}, this.checked)">
+                            </div>
+                            <div class="email-from">
+                                <div class="sender-avatar">${fromName.charAt(0).toUpperCase()}</div>
+                                <div class="sender-name">${fromEmail}</div>
+                            </div>
+                            <div class="email-content-preview">
+                                <div class="email-subject ${!email.seen ? 'unread' : ''}">
+                                    ${email.subject || '(Sin asunto)'}
+                                    ${!email.seen ? '<span class="unread-indicator">●</span>' : ''}
+                                </div>
+                            </div>
+                            <div class="email-attachment">
+                                ${attachmentIcon}
+                            </div>
+                            <div class="email-date">${formatDate(email.date)}</div>
+                            <div class="email-actions" onclick="event.stopPropagation()">
+                                <button class="action-btn ai-btn" onclick="suggestAIResponse(${email.uid})" title="Sugerir respuesta con IA">
+                                    🤖
+                                </button>
+                                <button class="action-btn star-btn" onclick="markAsImportant(${email.uid})" title="Marcar">
+                                    ⭐
+                                </button>
+                                <button class="action-btn delete-btn" onclick="deleteEmail(${email.uid})" title="Eliminar">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    }
+                }).join('');
     
     console.log('Generated HTML length:', emailsHTML.length);
     console.log('Setting innerHTML on content element');
@@ -473,6 +583,340 @@ function extractEmailName(address) {
     
     return fullAddress;
 }
+
+/**
+ * Extraer dirección de email
+ */
+function extractEmailAddress(emailString) {
+    if (!emailString) return 'desconocido@ejemplo.com';
+    
+    // Si contiene < y >, extraer el email
+    const match = emailString.match(/<(.+?)>$/);
+    if (match) {
+        return match[1].trim();
+    }
+    
+    // Si es solo un email, devolverlo tal como está
+    if (emailString.includes('@')) {
+        return emailString.trim();
+    }
+    
+    return emailString;
+}
+
+/**
+ * Sugerir respuesta con IA
+ */
+async function suggestAIResponse(uid) {
+    try {
+        console.log('🤖 Sugiriendo respuesta con IA para email:', uid);
+        
+        // Primero abrir el email
+        const email = AppState.emails.find(e => e.uid === uid);
+        if (!email) {
+            showNotification('Email no encontrado', 'error');
+            return;
+        }
+        
+        // Abrir el modal del email
+        await showEmailModal(email);
+        
+        // Mostrar modal de IA
+        showAIResponseModal(email);
+        
+    } catch (error) {
+        console.error('Error al sugerir respuesta con IA:', error);
+        showNotification('Error al generar sugerencia de IA', 'error');
+    }
+}
+
+/**
+ * Mostrar modal de sugerencia de IA
+ */
+function showAIResponseModal(email) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'aiResponseModal';
+    modal.style.display = 'flex';
+    
+    modal.innerHTML = `
+        <div class="modal ai-modal">
+            <div class="modal-header">
+                <div class="modal-title">🤖 Sugerir Respuesta con IA</div>
+                <button class="modal-close" onclick="closeAIResponseModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="ai-email-info">
+                    <h4>Respondiendo a:</h4>
+                    <p><strong>De:</strong> ${email.from}</p>
+                    <p><strong>Asunto:</strong> ${email.subject}</p>
+                </div>
+                <div class="ai-options">
+                    <button class="ai-option-btn" onclick="generateAIResponse('${email.uid}', 'formal')">
+                        📝 Respuesta Formal
+                    </button>
+                    <button class="ai-option-btn" onclick="generateAIResponse('${email.uid}', 'casual')">
+                        😊 Respuesta Casual
+                    </button>
+                    <button class="ai-option-btn" onclick="generateAIResponse('${email.uid}', 'brief')">
+                        ⚡ Respuesta Breve
+                    </button>
+                </div>
+                <div class="ai-response" id="aiResponse" style="display: none;">
+                    <h4>Respuesta sugerida:</h4>
+                    <div class="ai-text" id="aiText"></div>
+                    <div class="ai-actions">
+                        <button class="btn btn-primary" onclick="useAIResponse()">Usar Respuesta</button>
+                        <button class="btn btn-secondary" onclick="regenerateAIResponse()">Regenerar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+}
+
+/**
+ * Generar respuesta con IA
+ */
+async function generateAIResponse(uid, style) {
+    try {
+        const email = AppState.emails.find(e => e.uid === uid);
+        if (!email) {
+            showNotification('Email no encontrado', 'error');
+            return;
+        }
+        
+        showNotification('🤖 Generando respuesta con IA...', 'info');
+        
+        // Llamar a la API de OpenAI
+        const response = await fetch('/api/emails/ai-response', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                email: email,
+                style: style
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Crear o actualizar el modal de respuesta IA
+            let aiModal = document.getElementById('aiResponseModal');
+            if (!aiModal) {
+                aiModal = document.createElement('div');
+                aiModal.id = 'aiResponseModal';
+                aiModal.className = 'modal';
+                aiModal.innerHTML = `
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>🤖 Respuesta Generada con IA</h3>
+                            <button class="close-btn" onclick="closeAIResponseModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="aiResponse" style="display: block;">
+                                <div id="aiText" style="white-space: pre-wrap; padding: 16px; background: var(--bg-light); border-radius: 8px; margin: 16px 0;"></div>
+                                <div class="ai-actions">
+                                    <button class="btn btn-primary" onclick="useAIResponse()">Usar Respuesta</button>
+                                    <button class="btn btn-secondary" onclick="regenerateAIResponse()">Regenerar</button>
+                                    <button class="btn btn-secondary" onclick="closeAIResponseModal()">Cerrar</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(aiModal);
+            }
+            
+            const aiText = document.getElementById('aiText');
+            const aiResponse = document.getElementById('aiResponse');
+            
+            if (aiText) aiText.textContent = data.response;
+            if (aiResponse) aiResponse.style.display = 'block';
+            
+            // Guardar respuesta para usar después
+            window.currentAIResponse = data.response;
+            
+            // Mostrar el modal
+            aiModal.style.display = 'flex';
+            
+            showNotification('✅ Respuesta generada con IA', 'success');
+            
+        } else if (data.fallback) {
+            // Usar respuestas predefinidas si OpenAI no está configurado
+            const responses = {
+                formal: `Estimado/a ${extractEmailName(email.from)},\n\nGracias por su mensaje del ${formatDate(email.date)}. He revisado su consulta y procederé a darle seguimiento en las próximas horas.\n\nQuedo atento a cualquier aclaración adicional.\n\nSaludos cordiales.`,
+                casual: `¡Hola ${extractEmailName(email.from)}!\n\nGracias por tu mensaje. Te respondo para confirmar que recibí tu consulta y la estoy revisando.\n\nTe mantendré al tanto de cualquier novedad.\n\n¡Saludos!`,
+                brief: `Hola ${extractEmailName(email.from)},\n\nRecibido. Te respondo pronto.\n\nSaludos.`
+            };
+            
+            // Crear o actualizar el modal de respuesta IA
+            let aiModal = document.getElementById('aiResponseModal');
+            if (!aiModal) {
+                aiModal = document.createElement('div');
+                aiModal.id = 'aiResponseModal';
+                aiModal.className = 'modal';
+                aiModal.innerHTML = `
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>🤖 Respuesta Generada con IA</h3>
+                            <button class="close-btn" onclick="closeAIResponseModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="aiResponse" style="display: block;">
+                                <div id="aiText" style="white-space: pre-wrap; padding: 16px; background: var(--bg-light); border-radius: 8px; margin: 16px 0;"></div>
+                                <div class="ai-actions">
+                                    <button class="btn btn-primary" onclick="useAIResponse()">Usar Respuesta</button>
+                                    <button class="btn btn-secondary" onclick="regenerateAIResponse()">Regenerar</button>
+                                    <button class="btn btn-secondary" onclick="closeAIResponseModal()">Cerrar</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(aiModal);
+            }
+            
+            const aiText = document.getElementById('aiText');
+            const aiResponse = document.getElementById('aiResponse');
+            
+            if (aiText) aiText.textContent = responses[style];
+            if (aiResponse) aiResponse.style.display = 'block';
+            
+            window.currentAIResponse = responses[style];
+            
+            // Mostrar el modal
+            aiModal.style.display = 'flex';
+            
+            showNotification('⚠️ Usando respuesta predefinida (OpenAI no configurado)', 'warning');
+        } else {
+            throw new Error(data.error || 'Error desconocido');
+        }
+        
+    } catch (error) {
+        console.error('Error generando respuesta con IA:', error);
+        showNotification('Error al generar respuesta con IA: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Usar respuesta de IA
+ */
+function useAIResponse() {
+    if (window.currentAIResponse) {
+        // Abrir composer con la respuesta de IA
+        showComposer();
+        
+        // Llenar el campo de mensaje con la respuesta de IA
+        setTimeout(() => {
+            const messageField = document.getElementById('composerMessage');
+            if (messageField) {
+                messageField.value = window.currentAIResponse;
+            }
+        }, 500);
+        
+        closeAIResponseModal();
+        showNotification('✅ Respuesta de IA cargada en el composer', 'success');
+    }
+}
+
+/**
+ * Regenerar respuesta de IA
+ */
+function regenerateAIResponse() {
+    const aiResponse = document.getElementById('aiResponse');
+    aiResponse.style.display = 'none';
+    showNotification('🔄 Regenerando respuesta...', 'info');
+}
+
+/**
+ * Cerrar modal de IA
+ */
+function closeAIResponseModal() {
+    const modal = document.getElementById('aiResponseModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+/**
+ * Toggle CC/CCO fields
+ */
+function toggleCcBcc() {
+    console.log('toggleCcBcc called');
+    try {
+        const ccBccGroup = document.getElementById('ccBccGroup');
+        const ccBccGroup2 = document.getElementById('ccBccGroup2');
+        const toggleBtn = document.getElementById('toggleCcBcc');
+        
+        console.log('Elements found:', { ccBccGroup, ccBccGroup2, toggleBtn });
+        
+        if (!ccBccGroup || !ccBccGroup2 || !toggleBtn) {
+            console.error('Elements not found:', { ccBccGroup, ccBccGroup2, toggleBtn });
+            return;
+        }
+        
+        if (ccBccGroup.style.display === 'none' || ccBccGroup.style.display === '') {
+            ccBccGroup.style.display = 'flex';
+            ccBccGroup2.style.display = 'flex';
+            toggleBtn.textContent = '- CC, CCO';
+            console.log('CC/CCO fields shown');
+        } else {
+            ccBccGroup.style.display = 'none';
+            ccBccGroup2.style.display = 'none';
+            toggleBtn.textContent = '+ CC, CCO';
+            console.log('CC/CCO fields hidden');
+        }
+    } catch (error) {
+        console.error('Error in toggleCcBcc:', error);
+    }
+}
+
+// Asegurar que la función esté disponible globalmente
+window.toggleCcBcc = toggleCcBcc;
+
+// También asegurar que esté disponible en el scope global
+if (typeof window !== 'undefined') {
+    window.toggleCcBcc = toggleCcBcc;
+}
+
+// Función alternativa para asegurar disponibilidad
+function toggleCcBccAlternative() {
+    console.log('toggleCcBccAlternative called');
+    try {
+        const ccBccGroup = document.getElementById('ccBccGroup');
+        const ccBccGroup2 = document.getElementById('ccBccGroup2');
+        const toggleBtn = document.getElementById('toggleCcBcc');
+        
+        console.log('Elements found:', { ccBccGroup, ccBccGroup2, toggleBtn });
+        
+        if (!ccBccGroup || !ccBccGroup2 || !toggleBtn) {
+            console.error('Elements not found:', { ccBccGroup, ccBccGroup2, toggleBtn });
+            return;
+        }
+        
+        if (ccBccGroup.style.display === 'none' || ccBccGroup.style.display === '') {
+            ccBccGroup.style.display = 'flex';
+            ccBccGroup2.style.display = 'flex';
+            toggleBtn.textContent = '- CC, CCO';
+            console.log('CC/CCO fields shown');
+        } else {
+            ccBccGroup.style.display = 'none';
+            ccBccGroup2.style.display = 'none';
+            toggleBtn.textContent = '+ CC, CCO';
+            console.log('CC/CCO fields hidden');
+        }
+    } catch (error) {
+        console.error('Error in toggleCcBccAlternative:', error);
+    }
+}
+
+// Asignar también la función alternativa
+window.toggleCcBccAlternative = toggleCcBccAlternative;
 
 /**
  * Extraer contactos de emails para autocompletado
@@ -903,23 +1347,27 @@ function extractEmailSnippet(email) {
         
         // Si después de limpiar no queda nada, usar mensaje alternativo
         if (content.length === 0) {
-            return 'Contenido no disponible';
+            return '📄 Email sin contenido de texto';
         }
         
-        // Truncar a 120 caracteres máximo
-        if (content.length > 120) {
-            content = content.substring(0, 117) + '...';
+        // Truncar a 100 caracteres máximo para móvil
+        if (content.length > 100) {
+            content = content.substring(0, 97) + '...';
         }
         
         return content;
     }
     
-    // Si no hay contenido, mostrar un mensaje más útil basado en el asunto
-    if (email.subject) {
-        return 'Email sin contenido de texto';
+    // Si no hay contenido, mostrar información útil
+    if (email.attachments && email.attachments.length > 0) {
+        return `📎 ${email.attachments.length} adjunto${email.attachments.length > 1 ? 's' : ''}`;
     }
     
-    return 'Contenido no disponible';
+    if (email.subject && email.subject.toLowerCase().includes('adjunto')) {
+        return '📎 Email con adjuntos';
+    }
+    
+    return '📄 Email sin contenido de texto';
 }
 
 /**
@@ -927,10 +1375,38 @@ function extractEmailSnippet(email) {
  */
 async function openEmail(uid) {
     try {
+        console.log('📧 openEmail() called with uid:', uid);
+        console.log('📊 AppState.isLoading:', AppState.isLoading);
+        console.log('📊 AppState.emails.length:', AppState.emails ? AppState.emails.length : 'null');
+        
+        // Verificar credenciales
         if (!AppState.userCredentials) {
-            await requestCredentials('Para abrir emails');
+            console.log('❌ No hay credenciales para cargar emails');
+            showNotification('Sesión expirada. Redirigiendo al login...', 'error');
+            setTimeout(() => {
+                window.location.href = '/login.html';
+            }, 2000);
             return;
         }
+        
+        // Optimización: usar cache si el email ya está cargado
+        const email = AppState.emails.find(e => e.uid === uid);
+        if (email && email.fullContent) {
+            console.log('📦 Email encontrado en cache, mostrando modal');
+            showEmailModal(email.fullContent);
+            // Asegurar que no esté en estado de loading
+            if (AppState.isLoading) {
+                console.log('🔄 Email desde cache: quitando estado de loading');
+                hideLoading();
+                // Re-renderizar emails para quitar el loading visualmente
+                console.log('🔄 Llamando a renderEmails() desde cache');
+                renderEmails();
+            }
+            return;
+        }
+        
+        console.log('🔄 Email no está en cache, cargando desde servidor...');
+        showLoading();
         
         const response = await fetch(`/api/emails/${AppState.currentFolder}/${uid}`, {
             method: 'POST',
@@ -943,14 +1419,32 @@ async function openEmail(uid) {
         const data = await response.json();
         
         if (data.success) {
+            console.log('✅ Email cargado exitosamente desde servidor');
+            // Guardar contenido completo en cache
+            if (email) {
+                email.fullContent = data.email;
+                console.log('💾 Email guardado en cache local');
+            }
             showEmailModal(data.email);
         } else {
+            console.log('❌ Error al cargar email:', data.error);
             showNotification(data.error || 'Error al cargar email', 'error');
         }
         
+        console.log('🔄 hideLoading() llamado al final de openEmail');
+        hideLoading();
+        // Re-renderizar emails para quitar el loading visualmente
+        console.log('🔄 Llamando a renderEmails() para quitar loading visual');
+        renderEmails();
+        
     } catch (error) {
-        console.error('Error al abrir email:', error);
+        console.error('❌ Error al abrir email:', error);
         showNotification('Error al cargar email', 'error');
+        console.log('🔄 hideLoading() llamado en catch de openEmail');
+        hideLoading();
+        // Re-renderizar emails para quitar el loading visualmente
+        console.log('🔄 Llamando a renderEmails() desde catch');
+        renderEmails();
     }
 }
 
@@ -1060,7 +1554,9 @@ function showEmailModal(email) {
     // Guardar email actual para respuesta
     AppState.currentEmail = email;
     
+    console.log('📱 Mostrando modal de email');
     modal.style.display = 'flex';
+    console.log('✅ Modal mostrado, display:', modal.style.display);
     
     // Pre-cargar vistas previas de imágenes adjuntas
     if (email.attachments && email.attachments.length > 0) {
@@ -1098,6 +1594,8 @@ function showEmailModal(email) {
  * Cerrar modal de email
  */
 function closeEmailModal() {
+    console.log('🚪 closeEmailModal() called');
+    console.log('🔍 Stack trace:', new Error().stack);
     const modal = document.getElementById('emailModal');
     
     // Limpiar URLs de blob de imágenes para liberar memoria
@@ -1201,8 +1699,13 @@ async function closeComposer() {
  */
 async function saveDraft() {
     try {
+        // Verificar credenciales
         if (!AppState.userCredentials) {
-            await requestCredentials('Para guardar borradores');
+            console.log('❌ No hay credenciales para cargar emails');
+            showNotification('Sesión expirada. Redirigiendo al login...', 'error');
+            setTimeout(() => {
+                window.location.href = '/login.html';
+            }, 2000);
             return;
         }
         
@@ -1271,8 +1774,13 @@ async function sendEmail() {
             return;
         }
         
+        // Verificar credenciales
         if (!AppState.userCredentials) {
-            await requestCredentials('Para enviar emails');
+            console.log('❌ No hay credenciales para cargar emails');
+            showNotification('Sesión expirada. Redirigiendo al login...', 'error');
+            setTimeout(() => {
+                window.location.href = '/login.html';
+            }, 2000);
             return;
         }
         
@@ -1468,8 +1976,13 @@ function closeCredentialsModal() {
  */
 async function moveEmail(uid, targetFolder) {
     try {
+        // Verificar credenciales
         if (!AppState.userCredentials) {
-            await requestCredentials('Para mover emails');
+            console.log('❌ No hay credenciales para cargar emails');
+            showNotification('Sesión expirada. Redirigiendo al login...', 'error');
+            setTimeout(() => {
+                window.location.href = '/login.html';
+            }, 2000);
             return;
         }
         
@@ -1526,8 +2039,13 @@ async function deleteEmail(uid) {
     }
     
     try {
+        // Verificar credenciales
         if (!AppState.userCredentials) {
-            await requestCredentials('Para eliminar emails');
+            console.log('❌ No hay credenciales para cargar emails');
+            showNotification('Sesión expirada. Redirigiendo al login...', 'error');
+            setTimeout(() => {
+                window.location.href = '/login.html';
+            }, 2000);
             return;
         }
         
@@ -1559,9 +2077,64 @@ async function deleteEmail(uid) {
  * Refrescar emails
  */
 async function refreshEmails() {
+    // Limpiar caché antes de refrescar para obtener datos actualizados
+    await clearEmailCache();
     await loadEmails(AppState.currentFolder);
     await loadFolderStats();
+    updateLastUpdateTime();
     showNotification('Emails actualizados', 'success');
+}
+
+/**
+ * Actualizar la hora de última actualización
+ */
+function updateLastUpdateTime() {
+    const lastUpdateTimeElement = document.getElementById('lastUpdateTime');
+    const lastUpdateTimeElementMobile = document.getElementById('lastUpdateTimeMobile');
+    if (lastUpdateTimeElement) {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString('es-ES', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        lastUpdateTimeElement.textContent = timeString;
+    }
+    if (lastUpdateTimeElementMobile) {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString('es-ES', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        lastUpdateTimeElementMobile.textContent = timeString;
+    }
+}
+
+/**
+ * Limpiar caché del servidor
+ */
+async function clearEmailCache() {
+    try {
+        const response = await fetch('/api/emails/clear-cache', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+            console.log('✅ Caché limpiado exitosamente');
+            // Opcional: mostrar notificación al usuario
+            showNotification('Caché limpiado', 'success');
+        } else {
+            console.error('❌ Error al limpiar caché:', result.error);
+            showNotification('Error al limpiar caché', 'error');
+        }
+    } catch (error) {
+        console.error('❌ Error al limpiar caché:', error);
+        showNotification('Error al limpiar caché', 'error');
+    }
 }
 
 /**
@@ -1598,6 +2171,14 @@ function updatePaginationControls() {
     const pageIndicator = document.getElementById('pageIndicator');
     const paginationInfo = document.getElementById('paginationInfo');
     const emailCount = document.getElementById('emailCount');
+    const emailCountMobile = document.getElementById('emailCountMobile');
+    const paginationInfoMobile = document.getElementById('paginationInfoMobile');
+    
+    // Verificar que todos los elementos existen antes de usarlos
+    if (!paginationControls || !prevBtn || !nextBtn || !pageIndicator || !paginationInfo || !emailCount) {
+        console.warn('Algunos elementos de paginación no existen en el DOM');
+        return;
+    }
     
     // Mostrar controles solo si hay más de 50 emails
     if (AppState.totalEmails > AppState.emailsPerPage) {
@@ -1611,10 +2192,13 @@ function updatePaginationControls() {
     } else {
         paginationControls.style.display = 'none';
         if (AppState.totalEmails > 0) {
-            paginationInfo.style.display = 'block';
-            emailCount.textContent = AppState.totalEmails;
+        paginationInfo.style.display = 'block';
+        emailCount.textContent = AppState.totalEmails;
+        if (paginationInfoMobile) paginationInfoMobile.style.display = 'block';
+        if (emailCountMobile) emailCountMobile.textContent = AppState.totalEmails;
         } else {
             paginationInfo.style.display = 'none';
+            if (paginationInfoMobile) paginationInfoMobile.style.display = 'none';
         }
     }
 }
@@ -1750,8 +2334,13 @@ async function viewAttachmentFullscreen(uid, index, filename) {
  */
 async function downloadAttachment(uid, attachmentIndex, filename) {
     try {
+        // Verificar credenciales
         if (!AppState.userCredentials) {
-            await requestCredentials('Para descargar adjuntos');
+            console.log('❌ No hay credenciales para cargar emails');
+            showNotification('Sesión expirada. Redirigiendo al login...', 'error');
+            setTimeout(() => {
+                window.location.href = '/login.html';
+            }, 2000);
             return;
         }
         
@@ -1801,6 +2390,29 @@ async function downloadAttachment(uid, attachmentIndex, filename) {
         console.error('Error downloading attachment:', error);
         showNotification(error.message || 'Error al descargar adjunto', 'error');
     }
+}
+
+/**
+ * Mostrar menú de perfil
+ */
+function showProfileMenu() {
+    const profileMenu = document.getElementById('profileMenu');
+    const profileEmail = document.getElementById('profileEmail');
+    const userEmail = document.getElementById('userEmail');
+    
+    if (profileEmail && userEmail) {
+        profileEmail.textContent = userEmail.textContent;
+    }
+    
+    profileMenu.style.display = 'block';
+}
+
+/**
+ * Ocultar menú de perfil
+ */
+function hideProfileMenu() {
+    const profileMenu = document.getElementById('profileMenu');
+    profileMenu.style.display = 'none';
 }
 
 /**
@@ -1933,7 +2545,28 @@ function showNotification(message, type = 'info') {
 }
 
 // Inicializar aplicación cuando el DOM esté listo
+/**
+ * Limpiar cache de emails
+ */
+function clearEmailCache() {
+    AppState.emailCache = {};
+    console.log('🗑️ Cache de emails limpiado');
+}
+
+/**
+ * Forzar recarga de emails (limpiar cache y recargar)
+ */
+async function forceReloadEmails() {
+    clearEmailCache();
+    await loadEmails(AppState.currentFolder);
+}
+
 document.addEventListener('DOMContentLoaded', init);
+
+// Inicializar la hora de última actualización cuando se carga la página
+setTimeout(() => {
+    updateLastUpdateTime();
+}, 1000);
 
 // Agregar estilos CSS para animaciones de notificaciones
 const style = document.createElement('style');

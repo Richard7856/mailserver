@@ -32,7 +32,7 @@
                             type="text" 
                             id="email" 
                             name="email" 
-                            placeholder="nombre"
+                            placeholder="nombre@grupoeuromex.com"
                             required
                             autocomplete="email"
                         >
@@ -290,6 +290,14 @@
 
                 if (data.success) {
                     showSuccess('¡Inicio de sesión exitoso! Redirigiendo...');
+                    
+                    // Guardar credenciales en sessionStorage
+                    sessionStorage.setItem('userCredentials', JSON.stringify({
+                        email: email,
+                        password: password
+                    }));
+                    
+                    console.log('✅ Credenciales guardadas en sessionStorage');
                     
                     // Redirigir al dashboard después de un breve delay
                     setTimeout(() => {

@@ -13,6 +13,72 @@ class EmailService {
   constructor() {
     // Pool de transportadores SMTP por usuario
     this.smtpTransports = new Map();
+    
+    // Sistema de caché para emails
+    this.emailCache = new Map(); // key: userEmail_folder, value: { emails, timestamp, totalCount }
+    this.cacheTimeout = 5 * 60 * 1000; // 5 minutos en milisegundos
+  }
+
+  /**
+   * Generar clave de caché para un usuario y carpeta
+   * @param {string} userEmail - Email del usuario
+   * @param {string} folder - Nombre de la carpeta
+   * @returns {string} - Clave de caché
+   */
+  _getCacheKey(userEmail, folder) {
+    return `${userEmail}_${folder}`;
+  }
+
+  /**
+   * Obtener datos de caché si están disponibles y no han expirado
+   * @param {string} userEmail - Email del usuario
+   * @param {string} folder - Nombre de la carpeta
+   * @returns {Object|null} - Datos de caché o null si no existe/expirado
+   */
+  _getCachedData(userEmail, folder) {
+    const cacheKey = this._getCacheKey(userEmail, folder);
+    const cachedData = this.emailCache.get(cacheKey);
+    
+    if (!cachedData) {
+      return null;
+    }
+    
+    const now = Date.now();
+    if (now - cachedData.timestamp > this.cacheTimeout) {
+      // Caché expirado, eliminarlo
+      this.emailCache.delete(cacheKey);
+      return null;
+    }
+    
+    return cachedData;
+  }
+
+  /**
+   * Guardar datos en caché
+   * @param {string} userEmail - Email del usuario
+   * @param {string} folder - Nombre de la carpeta
+   * @param {Array} emails - Lista de emails
+   * @param {number} totalCount - Número total de emails
+   */
+  _setCachedData(userEmail, folder, emails, totalCount) {
+    const cacheKey = this._getCacheKey(userEmail, folder);
+    this.emailCache.set(cacheKey, {
+      emails: emails,
+      timestamp: Date.now(),
+      totalCount: totalCount
+    });
+  }
+
+  /**
+   * Limpiar caché para un usuario específico
+   * @param {string} userEmail - Email del usuario
+   */
+  clearUserCache(userEmail) {
+    for (const [key] of this.emailCache) {
+      if (key.startsWith(`${userEmail}_`)) {
+        this.emailCache.delete(key);
+      }
+    }
   }
 
   /**
@@ -25,10 +91,25 @@ class EmailService {
    */
   async getEmailsFromFolder(userEmail, userPassword, folder, limit = 50) {
     try {
+      // Convertir clave de carpeta a valor real si es necesario
+      const realFolder = emailConfig.folders[folder] || folder;
+      
+      // Verificar caché primero
+      const cachedData = this._getCachedData(userEmail, folder);
+      if (cachedData) {
+        console.log(`📦 Usando caché para ${userEmail}/${folder} (${cachedData.emails.length} emails)`);
+        // Retornar solo el número limitado de emails solicitados
+        return {
+          emails: cachedData.emails.slice(0, limit),
+          totalCount: cachedData.totalCount
+        };
+      }
+
+      console.log(`🔄 Cargando emails desde servidor para ${userEmail}/${folder} -> ${realFolder}`);
       const connection = await authService.getUserConnection(userEmail, userPassword);
       
-      // Abrir carpeta
-      await connection.openBox(folder, true);
+      // Abrir carpeta usando el valor real
+      await connection.openBox(realFolder, true);
       
       // Buscar emails (los más recientes primero)
       const searchCriteria = ['ALL'];
@@ -191,7 +272,14 @@ class EmailService {
         count: validEmails.length
       });
 
-      return validEmails;
+      // Guardar en caché (guardamos todos los emails, no solo los limitados)
+      this._setCachedData(userEmail, folder, validEmails, validEmails.length);
+      
+      // Retornar solo el número limitado de emails solicitados
+      return {
+        emails: validEmails.slice(0, limit),
+        totalCount: validEmails.length
+      };
 
     } catch (error) {
       emailLogger.emailError(userEmail, 'get_emails_from_folder', error);
@@ -209,9 +297,12 @@ class EmailService {
    */
   async getEmailByUid(userEmail, userPassword, folder, uid) {
     try {
+      // Convertir clave de carpeta a valor real si es necesario
+      const realFolder = emailConfig.folders[folder] || folder;
+      
       const connection = await authService.getUserConnection(userEmail, userPassword);
       
-      await connection.openBox(folder, true);
+      await connection.openBox(realFolder, true);
       
       const searchCriteria = [['UID', uid]];
       const fetchOptions = {
@@ -641,14 +732,18 @@ class EmailService {
    */
   async moveEmail(userEmail, userPassword, sourceFolder, targetFolder, uid) {
     try {
+      // Convertir claves de carpeta a valores reales si es necesario
+      const realSourceFolder = emailConfig.folders[sourceFolder] || sourceFolder;
+      const realTargetFolder = emailConfig.folders[targetFolder] || targetFolder;
+      
       const connection = await authService.getUserConnection(userEmail, userPassword);
       
       // Abrir carpeta origen
-      await connection.openBox(sourceFolder, false);
+      await connection.openBox(realSourceFolder, false);
       
       // Mover email usando addFlags y expunge
       // Primero copiar el email a la carpeta destino
-      await connection.moveMessage(uid, targetFolder);
+      await connection.moveMessage(uid, realTargetFolder);
       
       emailLogger.emailOperation(userEmail, 'move_email', {
         sourceFolder: sourceFolder,
@@ -677,14 +772,17 @@ class EmailService {
    */
   async deleteEmail(userEmail, userPassword, folder, uid) {
     try {
+      // Convertir clave de carpeta a valor real si es necesario
+      const realFolder = emailConfig.folders[folder] || folder;
+      
       // Si no está en la papelera, mover a papelera
-      if (folder !== emailConfig.folders.TRASH) {
-        return await this.moveEmail(userEmail, userPassword, folder, emailConfig.folders.TRASH, uid);
+      if (realFolder !== emailConfig.folders.TRASH) {
+        return await this.moveEmail(userEmail, userPassword, folder, 'TRASH', uid);
       }
       
       // Si ya está en la papelera, eliminar permanentemente
       const connection = await authService.getUserConnection(userEmail, userPassword);
-      await connection.openBox(folder, false);
+      await connection.openBox(realFolder, false);
       
       // Marcar como eliminado y expunge
       await connection.addFlags(uid, '\\Deleted');

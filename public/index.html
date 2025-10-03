@@ -19,43 +19,96 @@
                 <div class="user-info">
                     <div class="user-email" id="userEmail">Cargando...</div>
                 </div>
-                <button class="logout-button" onclick="logout()">Cerrar Sesión</button>
+                <button class="profile-button" onclick="showProfileMenu()">👤 Perfil</button>
             </div>
         </div>
     </header>
 
-    <!-- Navegación de Carpetas -->
-    <nav class="folder-nav">
-        <div class="folder-nav-content">
-            <button class="folder-tab active" data-folder="INBOX" onclick="switchFolder('INBOX')">
-                📥 Inbox
-            </button>
-            <button class="folder-tab" data-folder="INBOX.Sent" onclick="switchFolder('INBOX.Sent')">
-                📤 Enviados
-            </button>
-            <button class="folder-tab" data-folder="INBOX.Drafts" onclick="switchFolder('INBOX.Drafts')">
-                📝 Borradores
-            </button>
-            <button class="folder-tab" data-folder="INBOX.Trash" onclick="switchFolder('INBOX.Trash')">
-                🗑️ Papelera
-            </button>
-            <button class="folder-tab" data-folder="INBOX.Junk" onclick="switchFolder('INBOX.Junk')">
-                🚫 Spam
-            </button>
+    <!-- Menú de Perfil -->
+    <div class="profile-menu" id="profileMenu" style="display: none;">
+        <div class="profile-menu-content">
+            <div class="profile-menu-header">
+                <h3>Perfil de Usuario</h3>
+                <button class="close-profile-menu" onclick="hideProfileMenu()">✕</button>
+            </div>
+            <div class="profile-menu-body">
+                <div class="profile-info">
+                    <div class="profile-email" id="profileEmail">Cargando...</div>
+                </div>
+                <div class="profile-actions">
+                    <button class="profile-action-btn" onclick="logout()">
+                        🚪 Cerrar Sesión
+                    </button>
+                </div>
+            </div>
         </div>
-    </nav>
+    </div>
 
     <!-- Contenido Principal -->
     <main class="main-content">
         <!-- Header del Contenido -->
-        <div class="content-header">
-            <div class="content-title">
-                <h2 id="currentFolderTitle">📥 Inbox</h2>
-                <div class="pagination-info" id="paginationInfo" style="display: none;">
-                    <span id="emailCount">0</span> correos
-                </div>
+            <div class="folder-tabs">
+                <a href="#" class="folder-tab active" onclick="switchFolder('INBOX')">
+                    📥 Inbox
+                </a>
+                <a href="#" class="folder-tab" onclick="switchFolder('SENT')">
+                    📤 Enviados
+                </a>
+                <a href="#" class="folder-tab" onclick="switchFolder('DRAFTS')">
+                    📝 Borradores
+                </a>
+                <a href="#" class="folder-tab" onclick="switchFolder('TRASH')">
+                    🗑️ Papelera
+                </a>
             </div>
-            <div class="content-actions">
+            <div class="content-header">
+                <!-- Estructura original para web -->
+                <div class="content-title">
+                    <h2 id="currentFolderTitle">📥 Inbox</h2>
+                    <div class="pagination-info" id="paginationInfo" style="display: none;">
+                        <span id="emailCount">0</span> correos
+                    </div>
+                </div>
+                <div class="content-actions">
+                    <button class="btn btn-primary" onclick="showComposer()">
+                        ✉️ Nuevo Email
+                    </button>
+                    <button class="btn btn-secondary" onclick="showProfileMenu()">
+                        👤 Perfil
+                    </button>
+                    <button class="btn btn-secondary" onclick="refreshEmails()">
+                        🔄 Actualizar
+                    </button>
+                    <div class="last-update-info" id="lastUpdateInfo">
+                        Última actualización: <span id="lastUpdateTime">--:--</span>
+                    </div>
+                </div>
+                
+                <!-- Estructura móvil -->
+                <div class="mobile-line-1">
+                    <div class="mobile-folder-title">
+                        <h2 id="currentFolderTitleMobile">📥 Inbox</h2>
+                        <div class="pagination-info" id="paginationInfoMobile" style="display: none;">
+                            <span id="emailCountMobile">0</span> correos
+                        </div>
+                    </div>
+                    <div class="mobile-last-update" id="lastUpdateInfoMobile">
+                        Última actualización: <span id="lastUpdateTimeMobile">--:--</span>
+                    </div>
+                </div>
+                
+                <div class="mobile-line-2">
+                    <button class="btn btn-primary" onclick="showComposer()">
+                        ✉️ Nuevo Email
+                    </button>
+                    <button class="btn btn-secondary" onclick="showProfileMenu()">
+                        👤 Perfil
+                    </button>
+                    <button class="btn btn-secondary" onclick="refreshEmails()">
+                        🔄 Actualizar
+                    </button>
+                </div>
+                
                 <div class="pagination-controls" id="paginationControls" style="display: none;">
                     <button class="btn btn-icon" onclick="previousPage()" id="prevPageBtn" disabled>
                         ←
@@ -65,16 +118,6 @@
                         →
                     </button>
                 </div>
-                <button class="btn btn-primary" onclick="showComposer()">
-                    ✉️ Nuevo Email
-                </button>
-                <button class="btn btn-secondary" onclick="showProfileSettings()">
-                    👤 Perfil
-                </button>
-                <button class="btn btn-secondary" onclick="refreshEmails()">
-                    🔄 Actualizar
-                </button>
-            </div>
         </div>
 
         <!-- Lista de Emails -->
@@ -137,19 +180,24 @@
                                     <div id="autocompleteDropdown" class="autocomplete-dropdown" style="display: none;"></div>
                                 </div>
                             </div>
-                            <div class="composer-row">
+                            <div class="composer-row cc-bcc-group" id="ccBccGroup" style="display: none;">
                                 <label class="composer-label">CC:</label>
                                 <div class="autocomplete-container">
                                     <input type="email" class="composer-input" id="composerCc" autocomplete="off">
                                     <div id="autocompleteDropdownCc" class="autocomplete-dropdown" style="display: none;"></div>
                                 </div>
                             </div>
-                            <div class="composer-row">
+                            <div class="composer-row cc-bcc-group" id="ccBccGroup2" style="display: none;">
                                 <label class="composer-label">CCO:</label>
                                 <div class="autocomplete-container">
                                     <input type="email" class="composer-input" id="composerBcc" autocomplete="off">
                                     <div id="autocompleteDropdownBcc" class="autocomplete-dropdown" style="display: none;"></div>
                                 </div>
+                            </div>
+                            <div class="composer-row">
+                                <button type="button" class="btn btn-link" id="toggleCcBcc" onclick="toggleCcBccAlternative()">
+                                    + CC, CCO
+                                </button>
                             </div>
                             <div class="composer-row">
                                 <label class="composer-label">Asunto:</label>
@@ -184,8 +232,8 @@
         </div>
     </div>
 
-    <!-- Modal de Credenciales (para operaciones que requieren re-autenticación) -->
-    <div id="credentialsModal" class="modal-overlay" style="display: none;">
+    <!-- Modal de Credenciales DESACTIVADO en MVP -->
+    <div id="credentialsModal" class="modal-overlay" style="display: none !important;">
         <div class="modal">
             <div class="modal-header">
                 <div class="modal-title">Verificación de Credenciales</div>

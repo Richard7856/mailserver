@@ -9,12 +9,15 @@ package-lock.json
 .env.*.local
 
 # User data (IMPORTANTE: No subir datos de usuarios)
-data/profiles/
-data/signatures/
+data/profiles/*
+!data/profiles/.gitkeep
+data/signatures/*
+!data/signatures/.gitkeep
 data/*.json
 
 # Logs
-logs/
+logs/*
+!logs/.gitkeep
 *.log
 npm-debug.log*
 error.log

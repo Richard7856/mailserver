@@ -240,8 +240,9 @@ const cleanupExpiredSessions = (req, res, next) => {
     const sessionAge = Date.now() - new Date(req.session.user.authenticatedAt).getTime();
     
     if (sessionAge > maxAge) {
+      const userEmail = req.session.user?.email || 'unknown';
       req.session.destroy();
-      emailLogger.session(req.session.user.email, 'cleanup_expired_session');
+      emailLogger.session(userEmail, 'cleanup_expired_session');
     }
   }
   
